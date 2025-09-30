@@ -1,0 +1,1007 @@
+-- Galaxy Hub — Full UI Redesign (Acrylic) with all original functionality preserved
+-- Author: Adapted for user (UI reorganized & beautified)
+-- Requires Fluent UI: https://github.com/dawid-scripts/Fluent
+
+-- Services
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualUser = game:GetService("VirtualUser")
+local vim = game:GetService("VirtualInputManager")
+
+-- Load Fluent
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+-- Player refs
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:FindFirstChild("Humanoid") or character:WaitForChild("Humanoid")
+local hrp = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart")
+
+local function initCharacter(char)
+    character = char
+    humanoid = character:WaitForChild("Humanoid")
+    hrp = character:WaitForChild("HumanoidRootPart")
+end
+player.CharacterAdded:Connect(initCharacter)
+
+-- -------------------------
+-- Helpers & Core features (from original script, slightly cleaned)
+-- -------------------------
+
+-- Teleport helper (for AFK and islands)
+local function teleportAFK(pos)
+    initCharacter(player.Character or player.CharacterAdded:Wait())
+    hrp.CFrame = CFrame.new(unpack(pos))
+end
+
+local function AddTeleportButtonToTab(tabSectionOrTab, name, position)
+    tabSectionOrTab:AddButton({
+        Title = name,
+        Description = ("Teleport to %s"):format(name),
+        Callback = function()
+            initCharacter(player.Character or player.CharacterAdded:Wait())
+            hrp.CFrame = CFrame.new(unpack(position))
+            if Fluent and Fluent.Notify then Fluent:Notify({ Title = "Teleport", Content = ("ไปยัง %s"):format(name), Duration = 3 }) end
+        end
+    })
+end
+
+-- Sniper generic - supports multiple modes
+local function AddSniperToggleFunctionality(name, mode)
+    -- mode: "set_compass", "warp_to_box", "set_primary_at_player"
+    local key = "Auto_"..name:gsub("%s","_")
+    _G[key] = false
+
+    local function startLoop()
+        task.spawn(function()
+            while _G[key] do
+                task.wait(0.1)
+                initCharacter(player.Character or player.CharacterAdded:Wait())
+                local model = workspace:FindFirstChild(name)
+                if model and model:IsA("Model") then
+                    if not model.PrimaryPart then
+                        local firstPart = model:FindFirstChildWhichIsA("BasePart")
+                        if firstPart then model.PrimaryPart = firstPart end
+                    end
+                    if model.PrimaryPart then
+                        if name == "Compass" and mode == "set_compass" then
+                            model:SetPrimaryPartCFrame(hrp.CFrame)
+                        elseif mode == "warp_to_box" then
+                            hrp.CFrame = model.PrimaryPart.CFrame + Vector3.new(0,5,0)
+                            task.wait(0.5)
+                            hrp.CFrame = CFrame.new(22.6135, 200003.5, 170.5) -- safe return
+                        elseif mode == "set_primary_at_player" then
+                            model:SetPrimaryPartCFrame(hrp.CFrame + Vector3.new(0,4,0))
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    return function(state)
+        _G[key] = state
+        if state then startLoop() end
+    end
+end
+
+-- Fruit click / sniper
+local function warpAndClick(obj)
+    if not obj then return end
+    initCharacter(player.Character or player.CharacterAdded:Wait())
+    local clickDetector = obj:FindFirstChildWhichIsA("ClickDetector")
+    if not clickDetector then
+        clickDetector = obj:FindFirstChild("Main1") and obj.Main1:FindFirstChildWhichIsA("ClickDetector")
+        if not clickDetector and obj:FindFirstChild("Handle") then
+            clickDetector = obj.Handle:FindFirstChildWhichIsA("ClickDetector")
+        end
+    end
+    -- move near object and click
+    if obj:IsA("BasePart") then
+        hrp.CFrame = obj.CFrame + Vector3.new(0,3,2)
+    else
+        -- if model, attempt to get a part
+        local part = obj:FindFirstChildWhichIsA("BasePart")
+        if part then hrp.CFrame = part.CFrame + Vector3.new(0,3,2) end
+    end
+    task.wait(0.1)
+    if clickDetector then
+        for i=1,3 do pcall(fireclickdetector, clickDetector); task.wait(0.05) end
+    end
+end
+
+local returnPosition = CFrame.new(29.8319, 200003.484, 187.3735)
+
+local function ClickFruit(fruitName)
+    local fruit = workspace:FindFirstChild(fruitName)
+    if fruit then
+        local handle = fruit:FindFirstChild("Handle") or fruit:FindFirstChild("Main1") or fruit
+        warpAndClick(handle)
+        task.wait(0.1)
+        hrp.CFrame = returnPosition
+    end
+end
+
+local function MakeFruitSniperCallback(fruitName)
+    local key = "AutoFruit_"..fruitName:gsub("%s","_")
+    _G[key] = false
+    return function(state)
+        _G[key] = state
+        if state then
+            task.spawn(function()
+                while _G[key] do
+                    task.wait(0.2)
+                    pcall(function() ClickFruit(fruitName) end)
+                end
+            end)
+        end
+    end
+end
+
+-- Mixer / Auto click
+local AutoMixEnabled = false
+local autoMixThread = nil
+
+local function warpAndClickMixer(obj)
+    if not hrp then return end
+    if typeof(obj) == "CFrame" then
+        hrp.CFrame = obj + Vector3.new(0,3,2)
+        task.wait(0.05)
+        return
+    end
+    if obj and obj.Parent and obj:IsA("BasePart") then
+        hrp.CFrame = obj.CFrame + Vector3.new(0,3,2)
+        task.wait(0.05)
+        local clickDetector = obj:FindFirstChildWhichIsA("ClickDetector")
+        if clickDetector then pcall(fireclickdetector, clickDetector) end
+    end
+end
+
+local function startAutoClickMix()
+    if autoMixThread then return end
+    autoMixThread = task.spawn(function()
+        while AutoMixEnabled do
+            local targets = {}
+            if workspace:FindFirstChild("Barrels") then
+                if workspace.Barrels:FindFirstChild("Crates") then
+                    for _, crate in ipairs(workspace.Barrels.Crates:GetChildren()) do table.insert(targets, crate) end
+                end
+                if workspace.Barrels:FindFirstChild("Barrels") then
+                    for _, barrel in ipairs(workspace.Barrels.Barrels:GetChildren()) do table.insert(targets, barrel) end
+                end
+            end
+
+            for _, obj in ipairs(targets) do
+                if not AutoMixEnabled then break end
+                warpAndClickMixer(obj)
+                task.wait(0.2)
+            end
+
+            local kitchen = workspace:FindFirstChild("Island8") and workspace.Island8.Kitchen and workspace.Island8.Kitchen:FindFirstChild("JuicingBowl")
+            if kitchen then
+                local mixers = { kitchen:FindFirstChild("Mixer1"), kitchen:FindFirstChild("Mixer2") }
+                for _, mixer in ipairs(mixers) do
+                    if mixer then warpAndClickMixer(mixer); task.wait(0.2) end
+                end
+            end
+
+            task.wait(0.5)
+        end
+        autoMixThread = nil
+    end)
+end
+
+-- Auto Drink variants
+local AutoDrinkEnabled = false
+local autoDrinkThread = nil
+local drinkNames = {
+    "Fruit Juice","Sour Juice","Coconut Milk","Pear Juice","Pumpkin Juice","Banana Juice","Apple Juice",
+}
+
+local function clickDrink(obj)
+    if not obj then return end
+    if not character then character = player.Character or player.CharacterAdded:Wait() end
+    if obj:IsA("Tool") then
+        local humanoidRef = character:FindFirstChild("Humanoid")
+        if humanoidRef then
+            humanoidRef:EquipTool(obj)
+            task.wait(0.05)
+            local handle = obj:FindFirstChild("Handle")
+            if handle then
+                local clickDetector = handle:FindFirstChildWhichIsA("ClickDetector")
+                if clickDetector then pcall(fireclickdetector, clickDetector)
+                else
+                    if obj:FindFirstChildWhichIsA("RemoteEvent") then obj:Activate() end
+                end
+            end
+        end
+    else
+        local clickDetector = obj:FindFirstChildWhichIsA("ClickDetector")
+        if clickDetector then pcall(fireclickdetector, clickDetector) end
+    end
+end
+
+local function startAutoDrink()
+    if autoDrinkThread then return end
+    autoDrinkThread = task.spawn(function()
+        while AutoDrinkEnabled do
+            for _, name in ipairs(drinkNames) do
+                local drink = workspace:FindFirstChild(name)
+                if drink then clickDrink(drink); task.wait(0.01) end
+            end
+            for _, tool in ipairs(player.Backpack:GetChildren()) do
+                if table.find(drinkNames, tool.Name) then clickDrink(tool); task.wait(0.01) end
+            end
+            for _, tool in ipairs(character:GetChildren()) do
+                if table.find(drinkNames, tool.Name) then clickDrink(tool); task.wait(0.01) end
+            end
+            task.wait(0.01)
+        end
+        autoDrinkThread = nil
+    end)
+end
+
+-- Fast drink (VIM)
+local runningDrink = false
+local function fastDrinkJuice()
+    while runningDrink do
+        local backpack = player:FindFirstChild("Backpack")
+        local char = player.Character
+        if backpack and char then
+            for _, item in ipairs(backpack:GetChildren()) do
+                if not runningDrink then break end
+                if item:IsA("Tool") and (string.find(item.Name,"Juice") or string.find(item.Name,"Coconut Milk")) then
+                    item.Parent = char
+                    task.wait(0.15)
+                    pcall(function()
+                        vim:SendMouseButtonEvent(0,0,0,true,game,0)
+                        vim:SendMouseButtonEvent(0,0,0,false,game,0)
+                    end)
+                    task.wait(0.15)
+                end
+            end
+        end
+        task.wait(0.15)
+    end
+end
+
+-- Auto Drink 2 (inventory real click)
+local AutoDrinkEnabled2 = false
+local autoDrinkThread2 = nil
+local drinkNames2 = { "Cider+","Lemonade+","Juice+","Smoothie+" }
+
+local function realClickDrink(tool)
+    if not tool then return end
+    if not character then character = player.Character or player.CharacterAdded:Wait() end
+    if tool:IsA("Tool") then
+        local humanoidRef = character:FindFirstChild("Humanoid")
+        if humanoidRef then
+            humanoidRef:EquipTool(tool)
+            task.wait(0.05)
+            local remote = tool:FindFirstChildWhichIsA("RemoteEvent")
+            if remote then remote:FireServer() else pcall(function() tool:Activate() end) end
+        end
+    end
+end
+
+local function startAutoDrink2()
+    if autoDrinkThread2 then return end
+    autoDrinkThread2 = task.spawn(function()
+        while AutoDrinkEnabled2 do
+            for _, tool in ipairs(player.Backpack:GetChildren()) do
+                if table.find(drinkNames2, tool.Name) then realClickDrink(tool); task.wait(0.1) end
+            end
+            for _, tool in ipairs(character:GetChildren()) do
+                if table.find(drinkNames2, tool.Name) then realClickDrink(tool); task.wait(0.1) end
+            end
+            task.wait(0.1)
+        end
+        autoDrinkThread2 = nil
+    end)
+end
+
+-- Auto Trash (drop)
+local AutoTrashEnabled = false
+local autoTrashThread = nil
+local trashNames = { "Cider+","Lemonade+","Juice+","Smoothie+" }
+
+local function realDropTool(tool)
+    if not tool then return end
+    if not character then character = player.Character or player.CharacterAdded:Wait() end
+    if tool:IsA("Tool") then
+        local humanoidRef = character:FindFirstChild("Humanoid")
+        if humanoidRef then
+            humanoidRef:EquipTool(tool)
+            task.wait(0.05)
+            local remote = tool:FindFirstChildWhichIsA("RemoteEvent")
+            if remote then remote:FireServer() else pcall(function() tool.Parent = workspace end) end
+        end
+    end
+end
+
+local function startAutoTrash()
+    if autoTrashThread then return end
+    autoTrashThread = task.spawn(function()
+        while AutoTrashEnabled do
+            for _, tool in ipairs(player.Backpack:GetChildren()) do
+                if table.find(trashNames, tool.Name) then realDropTool(tool); task.wait(0.1) end
+            end
+            for _, tool in ipairs(character:GetChildren()) do
+                if table.find(trashNames, tool.Name) then realDropTool(tool); task.wait(0.1) end
+            end
+            task.wait(0.1)
+        end
+        autoTrashThread = nil
+    end)
+end
+
+-- Auto Claim Sam
+_G.AutoClaimSam = false
+local function toggleAutoClaimSam(state)
+    _G.AutoClaimSam = state
+    if state then
+        task.spawn(function()
+            while _G.AutoClaimSam do
+                task.wait(0.5)
+                pcall(function()
+                    local args = { [1] = "Claim1" }
+                    ReplicatedStorage:WaitForChild("Connections"):WaitForChild("Claim_Sam"):FireServer(unpack(args))
+                end)
+            end
+        end)
+    end
+end
+
+-- Warp compass loop
+local warpLoop = false
+local warpPoints = {
+    Vector3.new(-1281.110595703125, 217, -1178.7379150390625),
+    Vector3.new(-1283.301513671875, 216.99998474121094, -1180.8240966796875),
+    Vector3.new(-1280.953125, 216.99998474121094, -1183.2784423828125),
+    Vector3.new(-1278.7615966796875, 216.99998474121094, -1180.8641357421875),
+    Vector3.new(-1308.997802734375, 216.99998474121094, -1232.744384765625),
+    Vector3.new(-1311.296875, 216.99996948242188, -1235.3167724609375),
+    Vector3.new(-1309.1361083984375, 216.99998474121094, -1237.36376953125),
+    Vector3.new(-1306.763427734375, 216.99996948242188, -1234.9315185546875),
+    Vector3.new(-1226.1358642578125, 216.99998474121094, -1215.6966552734375),
+    Vector3.new(-1228.281982421875, 216.99998474121094, -1218.1971435546875),
+    Vector3.new(-1226.0015869140625, 216.99998474121094, -1220.3199462890625),
+    Vector3.new(-1223.685302734375, 216.99998474121094, -1218.197509765625),
+    Vector3.new(-1317.1019287109375, 216.99998474121094, -1298.641845703125),
+    Vector3.new(-1319.2401123046875, 216.99996948242188, -1300.97607421875),
+    Vector3.new(-1317.0908203125, 216.99998474121094, -1303.2755126953125),
+    Vector3.new(-1314.7467041015625, 216.99998474121094, -1300.9569091796875),
+    Vector3.new(-1270.1103515625, 216.99998474121094, -1263.7564697265625),
+    Vector3.new(-1272.22900390625, 216.99996948242188, -1265.7425537109375),
+    Vector3.new(-1270.0235595703125, 216.99998474121094, -1268.2362060546875),
+    Vector3.new(-1267.753662109375, 216.99996948242188, -1265.9705810546875),
+    Vector3.new(-1219.7298583984375, 216.99996948242188, -1272.7569580078125),
+    Vector3.new(-1222.249267578125, 216.99998474121094, -1275.039306640625),
+    Vector3.new(-1219.922119140625, 216.99996948242188, -1277.2440185546875),
+    Vector3.new(-1217.7545166015625, 216.99998474121094, -1274.8414306640625),
+    Vector3.new(-1213.843017578125, 216.99998474121094, -1331.74169921875),
+    Vector3.new(-1216.298583984375, 216.99998474121094, -1333.782958984375),
+    Vector3.new(-1213.8511962890625, 216.99998474121094, -1336.5513916015625),
+    Vector3.new(-1211.743896484375, 216.99998474121094, -1333.8233642578125),
+    Vector3.new(-1242.97412109375, 216.99998474121094, -1406.560302734375),
+    Vector3.new(-1245.309326171875, 216.99998474121094, -1409.01611328125),
+    Vector3.new(-1242.920166015625, 216.99998474121094, -1411.2493896484375),
+    Vector3.new(-1240.6663818359375, 217, -1408.8404541015625)
+}
+
+local function toggleWarpCompass(state)
+    warpLoop = state
+    if state then
+        task.spawn(function()
+            while warpLoop do
+                for _, pos in ipairs(warpPoints) do
+                    if not warpLoop then break end
+                    initCharacter(player.Character or player.CharacterAdded:Wait())
+                    hrp.CFrame = CFrame.new(pos)
+                    task.wait(0.1)
+                end
+                task.wait(0.2)
+            end
+        end)
+    end
+end
+
+-- AutoQuestHaki and AutoKenbunshoku
+local function toggleAutoQuestHaki(state)
+    _G.auto = state
+    if state then
+        task.spawn(function()
+            while _G.auto do
+                pcall(function()
+                    local args = { [1] = "III" }
+                    workspace:WaitForChild("Merchants"):WaitForChild("QuestHakiMerchant"):WaitForChild("Clickable"):WaitForChild("Retum"):FireServer(unpack(args))
+                end)
+                task.wait(1)
+            end
+        end)
+    end
+end
+
+local function toggleAutoKenbunshoku(state)
+    _G.auto = state
+    if state then
+        task.spawn(function()
+            while _G.auto do
+                pcall(function()
+                    local playerLocal = Players.LocalPlayer
+                    local userData = workspace:WaitForChild("UserData"):WaitForChild("User_"..playerLocal.UserId)
+                    local III = userData:WaitForChild("III")
+                    local args = { [1] = "On", [2] = 1 }
+                    III:FireServer(unpack(args))
+                end)
+                task.wait(1)
+            end
+        end)
+    end
+end
+
+-- Bring Mob (Pull Thug)
+local function toggleBringMob(state)
+    _G.PullThug = state
+    if state then
+        task.spawn(function()
+            while _G.PullThug do
+                pcall(function()
+                    local playerLocal = Players.LocalPlayer
+                    local char = playerLocal.Character or playerLocal.CharacterAdded:Wait()
+                    local hrpLocal = char:FindFirstChild("HumanoidRootPart")
+                    if hrpLocal and workspace:FindFirstChild("Enemies") then
+                        local thugNames = { ["Lv12 Thug"] = true, ["Lv15 Thug"] = true }
+                        for name,_ in pairs(thugNames) do
+                            local enemy = workspace.Enemies:FindFirstChild(name)
+                            if enemy and enemy:FindFirstChild("HumanoidRootPart") and enemy:FindFirstChild("Humanoid") then
+                                local eHRP = enemy.HumanoidRootPart
+                                eHRP.CFrame = hrpLocal.CFrame * CFrame.new(0,0,0)
+                                eHRP.Anchored = true
+                                enemy.Humanoid.PlatformStand = true
+                            end
+                        end
+                    end
+                end)
+                task.wait(0.2)
+            end
+        end)
+    end
+end
+
+-- Noclip / Invisible / Speed / Infinity Jump
+local NoclipEnabled = false
+local NoclipConnection = nil
+local defaultSpeed = 16
+local boostedSpeed = 250
+local speedActive = false
+_G.InfiniteJumpMain = false
+
+local function toggleNoclip(state)
+    NoclipEnabled = state
+    if NoclipConnection then NoclipConnection:Disconnect(); NoclipConnection = nil end
+    if state then
+        local char = player.Character or player.CharacterAdded:Wait()
+        NoclipConnection = RunService.Stepped:Connect(function()
+            for _, part in pairs(char:GetChildren()) do
+                if part:IsA("BasePart") and part.CanCollide then part.CanCollide = false end
+            end
+        end)
+    else
+        local char = player.Character or player.CharacterAdded:Wait()
+        for _, part in pairs(char:GetChildren()) do
+            if part:IsA("BasePart") then part.CanCollide = true end
+        end
+    end
+end
+
+local function toggleSpeed(state)
+    speedActive = state
+    initCharacter(player.Character or player.CharacterAdded:Wait())
+    local humanoidRef = character:FindFirstChild("Humanoid")
+    if humanoidRef then humanoidRef.WalkSpeed = state and boostedSpeed or defaultSpeed end
+end
+
+RunService.RenderStepped:Connect(function()
+    if speedActive then
+        local char = player.Character
+        if char then
+            local humanoidRef = char:FindFirstChild("Humanoid")
+            local hrpRef = char:FindFirstChild("HumanoidRootPart")
+            if humanoidRef and hrpRef then
+                local moveDir = humanoidRef.MoveDirection
+                hrpRef.Velocity = Vector3.new(moveDir.X * boostedSpeed, hrpRef.Velocity.Y, moveDir.Z * boostedSpeed)
+            end
+        end
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if _G.InfiniteJumpMain then
+        local char = player.Character or player.CharacterAdded:Wait()
+        local hum = char:FindFirstChild("Humanoid")
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+
+-- ALT+Click Teleport binding
+local altClickBound = false
+local function bindAltClickTeleport()
+    if altClickBound then return end
+    altClickBound = true
+    local mouse = player:GetMouse()
+    mouse.Button1Down:Connect(function()
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt) then
+            initCharacter(player.Character or player.CharacterAdded:Wait())
+            local pos = mouse.Hit.Position
+            hrp.CFrame = CFrame.new(pos + Vector3.new(0,3,0))
+            if Fluent and Fluent.Notify then Fluent:Notify({ Title = "Teleport", Content = "ALT+Click Teleport used", Duration = 2 }) end
+        end
+    end)
+end
+
+-- Auto Chest (positions)
+local function toggleAutoChest(state)
+    _G.AutoChest = state
+    if state then
+        task.spawn(function()
+            local chestPositions = {
+                CFrame.new(-35.25, 228.99998474121094, 2155.75),
+                CFrame.new(767, 215.99998474121094, -1370.5),
+                CFrame.new(-1240, 217.99998474121094, 621.5000610351562),
+                CFrame.new(1793.904541015625, 236.99998474121094, 844.4024047851562),
+                CFrame.new(88.5, 299.9999694824219, -916),
+                CFrame.new(-37.5, 257, -1223.0001220703125),
+                CFrame.new(119.5, 248.00001525878906, -1231.0001220703125),
+                CFrame.new(1384.9998779296875, 223.99998474121094, -3491.5),
+                CFrame.new(1263.0001220703125, 215.99998474121094, -3103.5),
+                CFrame.new(1110.5, 223.99998474121094, -3449),
+                CFrame.new(2026, 447.9999694824219, -753.5000610351562),
+                CFrame.new(2203.29345703125, 215.9994354248047, -630.3720092773438),
+                CFrame.new(-5260.00048828125, 302.9999694824219, -7772.5),
+                CFrame.new(-1894.000244140625, 224.99998474121094, 3277.499755859375),
+                CFrame.new(-1886, 224.99998474121094, 3312.499755859375),
+                CFrame.new(-1910.0001220703125, 224.99998474121094, 3295.499755859375),
+                CFrame.new(1166, 218.99990844726562, 3316.5),
+                CFrame.new(1156, 218.99986267089844, 3316.5),
+                CFrame.new(1161, 218.99990844726562, 3316.5),
+                CFrame.new(-272.6213684082031, 254.99998474121094, -943.3788452148438),
+                CFrame.new(114.5, 219.99998474121094, -247),
+                CFrame.new(-246.6298370361328, 275.1282653808594, 349.3229675292969),
+                CFrame.new(16.5, 219.99998474121094, 139),
+                CFrame.new(-310.5000305175781, 221.99998474121094, -324.9999694824219),
+                CFrame.new(108, 223.99998474121094, -36.5),
+                CFrame.new(-212.00003051757812, 223.99998474121094, 20.5),
+                CFrame.new(-253.59532165527344, 274.8800048828125, 357.8055725097656),
+                CFrame.new(948, 215.99998474121094, 1210.5),
+                CFrame.new(-4001, 215.99998474121094, -2187.5),
+                CFrame.new(1857.457275390625, 217.99998474121094, 835.2762451171875),
+                CFrame.new(1864.5281982421875, 217.99998474121094, 842.3472290039062),
+                CFrame.new(1861.699462890625, 217.99998474121094, 838.1047973632812),
+                CFrame.new(1855.4229736328125, 236.99998474121094, 905.9207763671875),
+                CFrame.new(-246.54559326171875, 274.9999694824219, 349.9251708984375),
+                CFrame.new(-246.46327209472656, 274.9999694824219, 356.0033874511719),
+                CFrame.new(-251.27786254882812, 274.99998474121094, 353.1693115234375),
+            }
+
+            local playerLocal = Players.LocalPlayer
+            local characterLocal = playerLocal.Character or playerLocal.CharacterAdded:Wait()
+            local humanoidRootPart = characterLocal:WaitForChild("HumanoidRootPart")
+
+            while _G.AutoChest do
+                for _, cf in ipairs(chestPositions) do
+                    if not _G.AutoChest then break end
+                    humanoidRootPart.CFrame = cf
+                    task.wait(0.05)
+                end
+                task.wait(1)
+            end
+        end)
+    end
+end
+
+-- ESP (players + fruit in bag)
+local ESPs = {}
+local ESPEnabled = false
+local ESPColor = Color3.fromRGB(255,0,0)
+
+local function createESP(plr)
+    if plr == player or ESPs[plr] then return end
+    local char = plr.Character
+    local hrpRef = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrpRef then return end
+
+    local box = Instance.new("BoxHandleAdornment")
+    box.Adornee = hrpRef
+    box.AlwaysOnTop = true
+    box.Size = Vector3.new(2,5,1)
+    box.Color3 = ESPColor
+    box.Transparency = 0.5
+    box.Parent = workspace
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Size = UDim2.new(0,100,0,50)
+    billboard.Adornee = hrpRef
+    billboard.AlwaysOnTop = true
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1,0,1,0)
+    label.BackgroundTransparency = 1
+    label.Text = plr.Name
+    label.TextColor3 = ESPColor
+    label.TextScaled = true
+    label.Font = Enum.Font.Cartoon
+    label.Parent = billboard
+    billboard.Parent = workspace
+
+    ESPs[plr] = {box = box, label = billboard}
+end
+
+local function removeESP(plr)
+    if ESPs[plr] then
+        pcall(function()
+            ESPs[plr].box:Destroy()
+            ESPs[plr].label:Destroy()
+        end)
+        ESPs[plr] = nil
+    end
+end
+
+local function toggleESP(state)
+    ESPEnabled = state
+    if ESPEnabled then
+        for _, plr in ipairs(Players:GetPlayers()) do createESP(plr) end
+    else
+        for plr,_ in pairs(ESPs) do removeESP(plr) end
+    end
+end
+
+Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function() if ESPEnabled then createESP(plr) end end)
+end)
+Players.PlayerRemoving:Connect(removeESP)
+
+RunService.RenderStepped:Connect(function()
+    if ESPEnabled then
+        for plr, esp in pairs(ESPs) do
+            local char = plr.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                esp.box.Adornee = char.HumanoidRootPart
+                esp.label.Adornee = char.HumanoidRootPart
+            end
+        end
+    end
+end)
+
+-- ESP Fruit in bag (kept)
+local function toggleESPFruit(state)
+    _G.ESPFruit = state
+    local fruitsSet = {
+        ["Chilly Fruit"]=true, ["Flare Fruit"]=true, ["Magma Fruit"]=true, ["Rumble Fruit"]=true,
+        ["Sand Fruit"]=true, ["Phoenix Fruit"]=true, ["Ope Fruit"]=true,
+        ["Quake Fruit"]=true, ["Venom Fruit"]=true, ["Candy Fruit"]=true, ["Gas Fruit"]=true,
+        ["Dark Fruit"]=true, ["Plasma Fruit"]=true
+    }
+
+    local function addESPToCharacter(character, text)
+        if character and character:FindFirstChild("Head") and not character.Head:FindFirstChild("FruitESP") then
+            local billboard = Instance.new("BillboardGui")
+            billboard.Name = "FruitESP"
+            billboard.Adornee = character.Head
+            billboard.Size = UDim2.new(0, 200, 0, 50)
+            billboard.AlwaysOnTop = true
+
+            local label = Instance.new("TextLabel", billboard)
+            label.Size = UDim2.new(1, 0, 1, 0)
+            label.BackgroundTransparency = 1
+            label.Text = text
+            label.TextColor3 = Color3.fromRGB(0, 255, 255)
+            label.TextScaled = true
+            label.Font = Enum.Font.SourceSansBold
+
+            billboard.Parent = character.Head
+        end
+    end
+
+    local function removeESPFruit(character)
+        if character and character:FindFirstChild("Head") then
+            local esp = character.Head:FindFirstChild("FruitESP")
+            if esp then esp:Destroy() end
+        end
+    end
+
+    local function checkPlayer(p)
+        local function updateESP()
+            if not _G.ESPFruit then return end
+            local fruitList = {}
+            if p:FindFirstChild("Backpack") then
+                for _, item in pairs(p.Backpack:GetChildren()) do
+                    if fruitsSet[item.Name] then table.insert(fruitList, item.Name) end
+                end
+            end
+            if p.Character then
+                if #fruitList > 0 then addESPToCharacter(p.Character, table.concat(fruitList, ", ")) else removeESPFruit(p.Character) end
+            end
+        end
+
+        if p:FindFirstChild("Backpack") then
+            p.Backpack.ChildAdded:Connect(updateESP)
+            p.Backpack.ChildRemoved:Connect(updateESP)
+        end
+        p.CharacterAdded:Connect(function(char) char:WaitForChild("Head"); updateESP() end)
+        updateESP()
+    end
+
+    if state then
+        for _, p in pairs(Players:GetPlayers()) do if p ~= Players.LocalPlayer then checkPlayer(p) end end
+        Players.PlayerAdded:Connect(function(p) if p ~= Players.LocalPlayer then checkPlayer(p) end end)
+    else
+        for _, p in pairs(Players:GetPlayers()) do if p.Character then removeESPFruit(p.Character) end end
+    end
+end
+
+-- -------------------------
+-- Build Fluent UI (Acrylic / reorganized / polished)
+-- -------------------------
+local Window = Fluent:CreateWindow({
+    Title = "🌌 Galaxy Hub",
+    SubTitle = "[Alpha] One Piece: Mythical",
+    TabWidth = 200,
+    Size = UDim2.fromOffset(720, 560),
+    Acrylic = true,
+    Theme = "Acrylic",
+    MinimizeKey = Enum.KeyCode.RightControl
+})
+
+-- Tabs (well-organized)
+local TabMain = Window:AddTab({ Title = "⚡ Main", Icon = "🛠️" })
+local TabTeleport = Window:AddTab({ Title = "📍 Teleport", Icon = "📍" })
+local TabFruit = Window:AddTab({ Title = "🍎 Fruits", Icon = "🍎" })
+local TabSniper = Window:AddTab({ Title = "🎯 Snipers", Icon = "🎯" })
+local TabMixer = Window:AddTab({ Title = "🍹 Mixer", Icon = "🥤" })
+local TabESP = Window:AddTab({ Title = "👁 ESP", Icon = "👁" })
+local TabPlayer = Window:AddTab({ Title = "🚶 Player", Icon = "🚶" })
+local TabSettings = Window:AddTab({ Title = "⚙ Settings", Icon = "⚙" })
+
+-- -------------------------
+-- Main Tab
+-- -------------------------
+local sMain_util = TabMain:AddSection("🛠 Utilities")
+sMain_util:AddToggle("AutoClaimSam", {
+    Title = "Auto Claim Sam",
+    Description = "Claim Sam quest automatically",
+    Default = false,
+    Callback = function(state)
+        toggleAutoClaimSam(state)
+        if Fluent and Fluent.Notify then Fluent:Notify({ Title = state and "Auto Claim ON" or "Auto Claim OFF", Duration = 2 }) end
+    end
+})
+
+sMain_util:AddToggle("AutoChest", {
+    Title = "Auto Chest",
+    Description = "Run to chest positions automatically",
+    Default = false,
+    Callback = function(state)
+        _G.AutoChest = state
+        if state then toggleAutoChest(true) end
+        if Fluent and Fluent.Notify then Fluent:Notify({ Title = state and "AutoChest ON" or "AutoChest OFF", Duration = 2 }) end
+    end
+})
+
+sMain_util:AddToggle("AutoQuestHaki", {
+    Title = "Auto Quest Haki",
+    Description = "Auto claim Haki quest (III)",
+    Default = false,
+    Callback = function(state)
+        toggleAutoQuestHaki(state)
+        if Fluent and Fluent.Notify then Fluent:Notify({ Title = state and "AutoHaki ON" or "AutoHaki OFF", Duration = 2 }) end
+    end
+})
+
+sMain_util:AddToggle("AutoKenbun", {
+    Title = "Auto Kenbunshoku",
+    Description = "Auto Kenbunshoku (III) loop",
+    Default = false,
+    Callback = function(state)
+        toggleAutoKenbunshoku(state)
+        if Fluent and Fluent.Notify then Fluent:Notify({ Title = state and "Auto Kenbun ON" or "Auto Kenbun OFF", Duration = 2 }) end
+    end
+})
+
+sMain_util:AddToggle("BringMob", {
+    Title = "Bring Mob (Pull Thug)",
+    Description = "Pull specific mobs to you",
+    Default = false,
+    Callback = function(state)
+        toggleBringMob(state)
+        if Fluent and Fluent.Notify then Fluent:Notify({ Title = state and "BringMob ON" or "BringMob OFF", Duration = 2 }) end
+    end
+})
+
+sMain_util:AddToggle("AutoBounty", {
+    Title = "Auto Bounty (warp)",
+    Description = "Warp to bounty hot-spot every 15s",
+    Default = false,
+    Callback = function(state)
+        _G.AutoBountyLoop = state
+        if state then
+            task.spawn(function()
+                while _G.AutoBountyLoop do
+                    initCharacter(player.Character or player.CharacterAdded:Wait())
+                    hrp.CFrame = CFrame.new(-144.9529266357422, 210.999267578125, -739.3431396484375)
+                    task.wait(15)
+                end
+            end)
+        end
+        if Fluent and Fluent.Notify then Fluent:Notify({ Title = state and "AutoBounty ON" or "AutoBounty OFF", Duration = 2 }) end
+    end
+})
+
+sMain_util:AddToggle("InvisibleLocal", {
+    Title = "Invisible",
+    Description = "Make your character invisible (local)",
+    Default = false,
+    Callback = function(state)
+        _G.InvisibleLocal = state
+        if Fluent and Fluent.Notify then Fluent:Notify({ Title = state and "Invisible ON" or "Invisible OFF", Duration = 2 }) end
+        -- apply invisible behavior
+        task.spawn(function()
+            local playerLocal = Players.LocalPlayer
+            local char = playerLocal.Character or playerLocal.CharacterAdded:Wait()
+            local hrpLocal = char:WaitForChild("HumanoidRootPart")
+            local function setTransparency(ch, trans)
+                for _, part in pairs(ch:GetDescendants()) do
+                    if part:IsA("BasePart") or part:IsA("Decal") then part.LocalTransparencyModifier = trans end
+                end
+            end
+            if _G.InvisibleLocal then
+                local savedCFrame = hrpLocal.CFrame
+                hrpLocal.CFrame = CFrame.new(0,5000,0)
+                task.wait(0.1)
+                local seat = Instance.new("Seat", workspace)
+                seat.Name = "InvisSeat"
+                seat.Anchored = false
+                seat.CanCollide = false
+                seat.Transparency = 1
+                seat.CFrame = hrpLocal.CFrame
+                local weld = Instance.new("Weld", seat)
+                weld.Part0 = seat
+                weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+                seat.CFrame = savedCFrame
+                setTransparency(char, 0.5)
+                for _, part in ipairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end
+            else
+                local seat = workspace:FindFirstChild("InvisSeat")
+                if seat then seat:Destroy() end
+                setTransparency(char, 0)
+                for _, part in ipairs(char:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = true end end
+            end
+        end)
+    end
+})
+
+-- -------------------------
+-- Teleport Tab
+-- -------------------------
+local sTP_afk = TabTeleport:AddSection("🏝 AFK Spots")
+sTP_afk:AddButton({ Title = "AFK 1", Description = "AFK safe spot", Callback = function() teleportAFK({22.6135, 200003.5, 170.5}); Fluent:Notify({ Title="Teleport", Content="AFK 1", Duration=2 }) end })
+sTP_afk:AddButton({ Title = "AFK Haki", Description = "AFK (Haki)", Callback = function() teleportAFK({-14.552534103393555, 200004.484375, 200.60980224609375}); Fluent:Notify({ Title="Teleport", Content="AFK Haki", Duration=2 }) end })
+
+local sTP_islands = TabTeleport:AddSection("🗺 Islands")
+local islandPositions = {
+    {"Spawn Land 1", {119.5228, 248.0, -1232.9507}},
+    {"Spawn Land 2", {-296.1837, 265.4994, -96.6268}},
+    {"Sam Land", {-1281.9680, 239.9977, -1371.8807}},
+    {"Sell Drink Land", {1511.862060546875, 260.48614501953125, 2170.695068359375}},
+    {"House Land 1", {898.5979, 302.9982, 1218.1807}},
+    {"Treea Land", {1161.2182, 238.9002, 3340.6108}},
+    {"Tiny Land 1", {-35.2822, 228.9999, 2156.0024}},
+    {"Tiny Land 2", {-4004.8452, 215.9999, -2190.2009}},
+    {"Forset Land", {-6032.4243, 402, -5.0926}},
+    {"Egypt Land", {118.2466, 309.9999, 4945.2231}},
+    {"C Land", {3205.0498, 217, 1560.7314}},
+    {"Boss Land", {4566.2084, 217, 5462.7485}},
+    {"Evil Land", {-5271.3535, 516, -7846.6772}},
+    {"Snowy Land", {-2089.4167, 297, 3418.6816}},
+    {"SnowyMountains Land", {6644.3789, 417.9989, -1478.4702}},
+    {"SandCastle Land", {1078.3050, 245.2001, -3335.6132}},
+    {"Caver Land", {-1094.7250, 356, 1719.1688}},
+}
+for _, v in ipairs(islandPositions) do AddTeleportButtonToTab(sTP_islands, v[1], v[2]) end
+sTP_islands:AddButton({ Title = "Bind ALT+Click Teleport", Description = "ALT + LeftClick to teleport", Callback = function() bindAltClickTeleport(); Fluent:Notify({ Title="Bind", Content="ALT+Click bound", Duration=2 }) end })
+
+-- -------------------------
+-- Sniper Tab
+-- -------------------------
+local sSniper_compass = TabSniper:AddSection("🧭 Compass / Boxes")
+local compassToggleCb = AddSniperToggleFunctionality("Compass", "set_compass")
+sSniper_compass:AddToggle("AutoCompass", { Title = "Auto Compass (follow)", Default = false, Callback = function(state) compassToggleCb(state); Fluent:Notify({ Title = state and "AutoCompass ON" or "AutoCompass OFF", Duration = 2 }) end })
+
+-- Boxes
+local commonCb = AddSniperToggleFunctionality("Common Box", "set_primary_at_player")
+local uncommonCb = AddSniperToggleFunctionality("Uncommon Box", "set_primary_at_player")
+local rareCb = AddSniperToggleFunctionality("Rare Box", "warp_to_box")
+local ultraCb = AddSniperToggleFunctionality("Ultra Rare Box", "warp_to_box")
+
+sSniper_compass:AddToggle("CommonBox", { Title = "Common Box", Default = false, Callback = function(state) commonCb(state); Fluent:Notify({ Title = state and "Common ON" or "Common OFF", Duration = 2 }) end })
+sSniper_compass:AddToggle("UncommonBox", { Title = "Uncommon Box", Default = false, Callback = function(state) uncommonCb(state); Fluent:Notify({ Title = state and "Uncommon ON" or "Uncommon OFF", Duration = 2 }) end })
+sSniper_compass:AddToggle("RareBox", { Title = "Rare Box", Default = false, Callback = function(state) rareCb(state); Fluent:Notify({ Title = state and "Rare ON" or "Rare OFF", Duration = 2 }) end })
+sSniper_compass:AddToggle("UltraRareBox", { Title = "Ultra Rare Box", Default = false, Callback = function(state) ultraCb(state); Fluent:Notify({ Title = state and "UltraRare ON" or "UltraRare OFF", Duration = 2 }) end })
+
+sSniper_compass:AddButton({ Title = "Return To AFK Spot", Callback = function() initCharacter(player.Character or player.CharacterAdded:Wait()); hrp.CFrame = CFrame.new(22.6135, 200003.5, 170.5); Fluent:Notify({ Title="Return", Content="กลับตำแหน่ง AFK", Duration=2 }) end })
+
+-- -------------------------
+-- Fruit Tab
+-- -------------------------
+local fruitsList = {
+    "Chilly Fruit", "Flare Fruit", "Light Fruit", "Magma Fruit", "Rumble Fruit",
+    "Sand Fruit", "Smoke Fruit", "Snow Fruit", "Phoenix Fruit", "Ope Fruit",
+    "Quake Fruit", "Venom Fruit", "Candy Fruit", "Gas Fruit", "Hollow Fruit",
+    "Dark Fruit", "Plasma Fruit", "Luck Fruit"
+}
+
+local sFruit_autos = TabFruit:AddSection("🍏 Fruit Snipers")
+for _, fname in ipairs(fruitsList) do
+    local cb = MakeFruitSniperCallback(fname)
+    sFruit_autos:AddToggle(fname:gsub(" ","_"), {
+        Title = fname,
+        Default = false,
+        Callback = function(state)
+            cb(state)
+            if Fluent and Fluent.Notify then Fluent:Notify({ Title = state and (fname.." ON") or (fname.." OFF"), Duration = 2 }) end
+        end
+    })
+end
+
+local sFruit_misc = TabFruit:AddSection("🔧 Misc")
+sFruit_misc:AddButton({ Title = "Return to Safe Pos", Description = "Move back to safe position", Callback = function() initCharacter(player.Character or player.CharacterAdded:Wait()); hrp.CFrame = returnPosition; Fluent:Notify({ Title="Return", Content="กลับตำแหน่งปลอดภัย", Duration=2 }) end })
+
+-- -------------------------
+-- Mixer Tab
+-- -------------------------
+local sMix_auto = TabMixer:AddSection("⚙ Auto Mixer & Drinking")
+sMix_auto:AddToggle("AutoMixFruit", { Title = "Auto MixerFruit", Default = false, Callback = function(state) AutoMixEnabled = state; if state then startAutoClickMix() end; Fluent:Notify({ Title = state and "AutoMix ON" or "AutoMix OFF", Duration = 2 }) end })
+sMix_auto:AddToggle("AutoDrinkMix", { Title = "Auto Drink (MixerFruit)", Default = false, Callback = function(state) AutoDrinkEnabled = state; if state then startAutoDrink() end; Fluent:Notify({ Title = state and "AutoDrink ON" or "AutoDrink OFF", Duration = 2 }) end })
+sMix_auto:AddToggle("AutoDrinkV2", { Title = "Fast Drink (V2)", Default = false, Callback = function(state) runningDrink = state; if state then task.spawn(fastDrinkJuice) end; Fluent:Notify({ Title = state and "Fast Drink ON" or "Fast Drink OFF", Duration = 2 }) end })
+sMix_auto:AddToggle("AutoDrink2", { Title = "Auto Drink Beverages", Default = false, Callback = function(state) AutoDrinkEnabled2 = state; if state then startAutoDrink2() end; Fluent:Notify({ Title = state and "AutoDrink2 ON" or "AutoDrink2 OFF", Duration = 2 }) end })
+sMix_auto:AddToggle("AutoDropDrinks", { Title = "Auto Drop Drinks", Default = false, Callback = function(state) AutoTrashEnabled = state; if state then startAutoTrash() end; Fluent:Notify({ Title = state and "AutoDrop ON" or "AutoDrop OFF", Duration = 2 }) end })
+
+local sMix_misc = TabMixer:AddSection("🔧 Misc")
+sMix_misc:AddButton({ Title = "Return to Safe Pos", Callback = function() initCharacter(player.Character or player.CharacterAdded:Wait()); hrp.CFrame = returnPosition; Fluent:Notify({ Title="Return", Content="กลับตำแหน่งปลอดภัย", Duration=2 }) end })
+
+-- -------------------------
+-- ESP Tab
+-- -------------------------
+local sESP_controls = TabESP:AddSection("👁 ESP Controls")
+sESP_controls:AddToggle("ESPPlayers", { Title = "ESP Players", Default = false, Callback = function(state) toggleESP(state); Fluent:Notify({ Title = state and "ESP Players ON" or "ESP Players OFF", Duration = 2 }) end })
+sESP_controls:AddToggle("ESPFruitInBag", { Title = "ESP Fruit In Bag", Default = false, Callback = function(state) toggleESPFruit(state); Fluent:Notify({ Title = state and "ESP Fruit ON" or "ESP Fruit OFF", Duration = 2 }) end })
+
+-- -------------------------
+-- Player Tab
+-- -------------------------
+local sPlayer_movement = TabPlayer:AddSection("🚶 Movement")
+sPlayer_movement:AddToggle("Noclip", { Title = "Noclip", Default = false, Callback = function(state) toggleNoclip(state); Fluent:Notify({ Title = state and "Noclip ON" or "Noclip OFF", Duration = 2 }) end })
+sPlayer_movement:AddToggle("SpeedHack", { Title = "Speed Hack", Default = false, Callback = function(state) toggleSpeed(state); Fluent:Notify({ Title = state and "Speed ON" or "Speed OFF", Duration = 2 }) end })
+sPlayer_movement:AddToggle("InfinityJump", { Title = "Infinity Jump", Default = false, Callback = function(state) _G.InfiniteJumpMain = state; Fluent:Notify({ Title = state and "InfinityJump ON" or "InfinityJump OFF", Duration = 2 }) end })
+sPlayer_movement:AddButton({ Title = "Bind ALT+Click Teleport", Description = "ALT + LeftClick to teleport", Callback = function() bindAltClickTeleport(); Fluent:Notify({ Title="Bind", Content="ALT+Click bound", Duration=2 }) end })
+
+-- -------------------------
+-- Settings Tab
+-- -------------------------
+local sSet_appearance = TabSettings:AddSection("🎨 Appearance")
+sSet_appearance:AddButton({ Title = "Theme: Acrylic", Description = "Current theme is Acrylic (transparent)", Callback = function() Fluent:Notify({ Title = "Theme", Content = "Using Acrylic theme", Duration = 2 }) end })
+sSet_appearance:AddButton({ Title = "Theme: Dark", Callback = function() Fluent:Notify({ Title = "Theme", Content = "Switch to Dark theme manually in code if needed", Duration = 2 }) end })
+sSet_appearance:AddButton({ Title = "Theme: Light", Callback = function() Fluent:Notify({ Title = "Theme", Content = "Switch to Light theme manually in code if needed", Duration = 2 }) end })
+
+local sSet_misc = TabSettings:AddSection("🔔 Misc")
+sSet_misc:AddButton({ Title = "Enable AntiAFK", Description = "Quick AntiAFK toggle", Callback = function()
+    player.Idled:Connect(function() VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new()) end)
+    Fluent:Notify({ Title = "AntiAFK", Content = "Anti AFK enabled", Duration = 3 })
+end })
+
+-- Final notification
+if Fluent and Fluent.Notify then Fluent:Notify({ Title = "Galaxy Hub", Content = "UI loaded — พร้อมใช้งาน", Duration = 4 }) end
+
+print("Galaxy Hub (Full UI) loaded")
